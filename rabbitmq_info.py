@@ -36,44 +36,50 @@ VHOST = "/"
 VERBOSE_LOGGING = False
 
 
-# Obtain the interesting statistical info
+# Obtain the interesting statistical info for each virtual host.
 def get_stats():
     stats = {}
-    stats['ctl_messages'] = 0
-    stats['ctl_memory'] = 0
-    stats['ctl_consumers'] = 0
-    stats['pmap_mapped'] = 0
-    stats['pmap_used'] = 0
-    stats['pmap_shared'] = 0
+    stats['pmap.mapped'] = 0
+    stats['pmap.used'] = 0
+    stats['pmap.shared'] = 0
 
-    # call rabbitmqctl
-    try:
-        p = subprocess.Popen([RABBITMQCTL_BIN, '-q', '-p', VHOST,
-            'list_queues', 'name', 'messages', 'memory', 'consumers'],
-            shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    except:
-        logger('err', 'Failed to run %s' % RABBITMQCTL_BIN)
-        return None
+    for vhost in list(VHOST):
+      stats['ctl.{0}.messages'.format(vhost)] = 0
+      stats['ctl.{0}.memory'.format(vhost)] = 0
+      stats['ctl.{0}.consumers'.format(vhost)] = 0
 
-    for line in p.stdout.readlines():
-        ctl_stats = line.split()
-        try:
-            ctl_stats[1] = int(ctl_stats[1])
-            ctl_stats[2] = int(ctl_stats[2])
-            ctl_stats[3] = int(ctl_stats[3])
-        except:
-            continue
-        queue_name = ctl_stats[0]
-        stats['ctl_messages'] += ctl_stats[1]
-        stats['ctl_memory'] += ctl_stats[2]
-        stats['ctl_consumers'] += ctl_stats[3]
-        stats['ctl_messages_%s' % queue_name] = ctl_stats[1]
-        stats['ctl_memory_%s' % queue_name] = ctl_stats[2]
-        stats['ctl_consumers_%s' % queue_name] = ctl_stats[3]
+      # call rabbitmqctl
+      try:
+          p = subprocess.Popen([RABBITMQCTL_BIN, '-q', '-p', vhost,
+              'list_queues', 'name', 'durable', 'messages', 'memory', 'consumers'],
+              shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+      except:
+          logger('err', 'Failed to run %s' % RABBITMQCTL_BIN)
+          return None
 
-    if not stats['ctl_memory'] > 0:
-        logger('warn', '%s reports 0 memory usage. This is probably incorrect.'
-            % RABBITMQCTL_BIN)
+      for line in p.stdout.readlines():
+          ctl_stats = line.split()
+          try:
+              ctl_stats[2] = int(ctl_stats[2])
+              ctl_stats[3] = int(ctl_stats[3])
+              ctl_stats[4] = int(ctl_stats[4])
+          except:
+              continue
+
+          # Global metrics
+          stats['ctl.{0}.messages'.format(vhost)] += ctl_stats[2]
+          stats['ctl.{0}.memory'.format(vhost)] += ctl_stats[3]
+          stats['ctl.{0}.consumers'.format(vhost)] += ctl_stats[4]
+
+          # Per-queue metrics only on durable queues.
+          if ctl_stats[1] == 'true':
+            queue_name = ctl_stats[0]
+            stats['ctl.{0}.{1}.messages'.format(vhost, queue_name)] = ctl_stats[2]
+            stats['ctl.{0}.{1}.memory'.format(vhost, queue_name)] = ctl_stats[3]
+            stats['ctl.{0}.{1}.consumers'.format(vhost, queue_name)] = ctl_stats[4]
+
+      logger('verb', '[%s] Messages: %i, Memory: %i, Consumers: %i' %
+        (vhost, stats['ctl.{0}.messages'.format(vhost)], stats['ctl.{0}.memory'.format(vhost)], stats['ctl.{0}.consumers'.format(vhost)]))
 
     # get the pid of rabbitmq
     try:
@@ -94,18 +100,15 @@ def get_stats():
     line = p.stdout.readlines()[-1].strip()
     if re.match('mapped', line):
         m = re.match(r"\D+(\d+)\D+(\d+)\D+(\d+)", line)
-        stats['pmap_mapped'] = int(m.group(1))
-        stats['pmap_used'] = int(m.group(2))
-        stats['pmap_shared'] = int(m.group(3))
+        stats['pmap.mapped'] = int(m.group(1))
+        stats['pmap.used'] = int(m.group(2))
+        stats['pmap.shared'] = int(m.group(3))
     else:
         logger('warn', '%s returned something strange.' % PMAP_BIN)
         return None
 
-    # Verbose output
-    logger('verb', '[rmqctl] Messages: %i, Memory: %i, Consumers: %i' %
-        (stats['ctl_messages'], stats['ctl_memory'], stats['ctl_consumers']))
     logger('verb', '[pmap] Mapped: %i, Used: %i, Shared: %i' %
-        (stats['pmap_mapped'], stats['pmap_used'], stats['pmap_shared']))
+        (stats['pmap.mapped'], stats['pmap.used'], stats['pmap.shared']))
 
     return stats
 
@@ -123,7 +126,7 @@ def configure_callback(conf):
         elif node.key == 'Verbose':
             VERBOSE_LOGGING = bool(node.values[0])
         elif node.key == 'Vhost':
-            VHOST = node.values[0]
+            VHOST = node.values
         else:
             logger('warn', 'Unknown config key: %s' % node.key)
 
