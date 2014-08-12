@@ -12,7 +12,7 @@
        #PmapBin
        #PidFile
        #Verbose boolean
-       #Vhost string
+       #Vhost one two three
     </Module>
 </Plugin>
 
